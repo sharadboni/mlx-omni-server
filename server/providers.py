@@ -22,7 +22,7 @@ def _unload(key:str):
 
 
 @contextmanager
-def load_tts(self):
+def load_tts():
     if keep_in_memory and "tts" in _cache:
         yield _cache["tts"]
         return
@@ -44,7 +44,7 @@ def load_tts(self):
             log.info("TTS model unloaded from memory")
 
 @contextmanager
-def load_stt(self):
+def load_stt():
     if keep_in_memory and "stt" in _cache:
         yield _cache["stt"]
         return
@@ -64,7 +64,7 @@ def load_stt(self):
             log.info("STT model unloaded from memory")
 
 @contextmanager
-def load_vlm(self):
+def load_vlm():
     if keep_in_memory and "vlm" in _cache:
         yield _cache["vlm"]
         return

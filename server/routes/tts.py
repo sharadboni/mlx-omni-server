@@ -75,11 +75,9 @@ async def create_speech(req: SpeechRequest):
                         text=req.input,
                         ref_audio=ref_file.name,
                         speed=req.speed,
-                        x_vector_only_mode=True,  # stable speaker embedding
                     )
                     if req.ref_text:
                         gen_kwargs["ref_text"] = req.ref_text
-                        gen_kwargs["x_vector_only_mode"] = False  # use full cloning when transcript provided
                     for result in model.generate(**gen_kwargs):
                         chunks.append(np.array(result.audio))
                         sample_rate = result.sample_rate

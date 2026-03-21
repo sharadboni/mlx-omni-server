@@ -23,8 +23,16 @@ An OpenAI-compatible API server for text-to-speech, speech-to-text, and vision l
 
 ```bash
 make install
-# or
+```
+
+This runs `uv sync`, installs pip in the venv, and downloads the spacy English model needed by Kokoro for G2P.
+
+Or manually:
+
+```bash
 uv sync
+uv pip install pip
+uv run python -m spacy download en_core_web_sm
 ```
 
 ## Usage

@@ -12,6 +12,8 @@ class SpeechRequest(BaseModel):
     voice: str = "Chelsie"
     speed: float = 1.0
     response_format: Literal["wav", "mp3", "aac", "opus", "flac", "pcm"] = "mp3"
+    ref_audio: str | None = None   # base64-encoded reference audio for voice cloning
+    ref_text: str | None = None    # transcript of the reference audio
 
 ## STT
 

@@ -61,13 +61,39 @@ async def create_speech(req: SpeechRequest):
         with load_tts() as model:
             chunks: list[np.ndarray] = []
             sample_rate = 24000
-            for result in model.generate(
-                text=req.input,
-                voice=req.voice,
-                speed=req.speed,
-            ):
-                chunks.append(np.array(result.audio))
-                sample_rate = result.sample_rate
+
+            # Voice cloning: use ref_audio + ref_text
+            if req.ref_audio:
+                import base64
+                ref_bytes = base64.b64decode(req.ref_audio)
+                # Write ref audio to temp file
+                ref_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+                ref_file.write(ref_bytes)
+                ref_file.close()
+                try:
+                    gen_kwargs = dict(
+                        text=req.input,
+                        ref_audio=ref_file.name,
+                        speed=req.speed,
+                        x_vector_only_mode=True,  # stable speaker embedding
+                    )
+                    if req.ref_text:
+                        gen_kwargs["ref_text"] = req.ref_text
+                        gen_kwargs["x_vector_only_mode"] = False  # use full cloning when transcript provided
+                    for result in model.generate(**gen_kwargs):
+                        chunks.append(np.array(result.audio))
+                        sample_rate = result.sample_rate
+                finally:
+                    os.unlink(ref_file.name)
+            else:
+                # Standard voice preset
+                for result in model.generate(
+                    text=req.input,
+                    voice=req.voice,
+                    speed=req.speed,
+                ):
+                    chunks.append(np.array(result.audio))
+                    sample_rate = result.sample_rate
 
             if not chunks:
                 raise HTTPException(status_code=500, detail="TTS produced no audio")

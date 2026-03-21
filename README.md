@@ -4,10 +4,12 @@ An OpenAI-compatible API server for text-to-speech, speech-to-text, and vision l
 
 ## Features
 
-- **Text-to-Speech** — Generate speech from text with multiple voice and format options
+- **Text-to-Speech** — Generate speech with multiple voices, formats, and voice cloning
+- **Voice Cloning** — Clone any voice from a 3-second audio sample via `ref_audio`
 - **Speech-to-Text** — Transcribe audio from file uploads or base64-encoded input
 - **Vision Language Model** — Analyze and describe images using a multimodal LLM
 - **OpenAI-compatible endpoints** — Drop-in replacement for existing OpenAI API integrations
+- **Format conversion** — Automatic wav-to-opus/aac/flac conversion via ffmpeg
 - **Memory management** — Models are loaded on demand and optionally cached between requests
 
 ## Requirements
@@ -15,6 +17,7 @@ An OpenAI-compatible API server for text-to-speech, speech-to-text, and vision l
 - Python >= 3.11
 - Apple Silicon Mac (for MLX acceleration)
 - [uv](https://github.com/astral-sh/uv) package manager
+- ffmpeg (for opus/aac/flac output): `brew install ffmpeg`
 
 ## Installation
 
@@ -67,16 +70,33 @@ Returns `{"status": "ok"}`.
 POST /v1/audio/speech
 ```
 
+**Basic usage (named voice):**
+
 ```json
 {
   "input": "Hello, world!",
   "voice": "Chelsie",
   "speed": 1.0,
-  "response_format": "mp3"
+  "response_format": "opus"
 }
 ```
 
+**Voice cloning (reference audio):**
+
+```json
+{
+  "input": "Text to speak in the cloned voice.",
+  "ref_audio": "<base64-encoded reference audio>",
+  "ref_text": "Transcript of the reference audio.",
+  "response_format": "opus"
+}
+```
+
+When `ref_text` is provided, full voice cloning is used for best quality. Without `ref_text`, only the speaker embedding (`x_vector_only_mode`) is extracted — more stable but less expressive.
+
 Supported formats: `mp3`, `wav`, `aac`, `opus`, `flac`, `pcm`
+
+Formats other than `mp3` and `wav` are converted via ffmpeg automatically.
 
 Returns an audio stream with the appropriate MIME type.
 
@@ -140,8 +160,8 @@ Returns:
 
 | Capability | Model |
 |------------|-------|
-| TTS | `mlx-community/Qwen-TTS-12Hz-0.6B-Base-bf16` |
-| STT | `mlx-community/Qwen-ASR-0.6B-8BIT` |
+| TTS | `mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit` |
+| STT | `mlx-community/Qwen3-ASR-0.6B-8bit` |
 | VLM | `mlx-community/Qwen2.5-VL-3B-Instruct-8bit` |
 
 ## Project Structure
@@ -153,7 +173,7 @@ server/
 ├── models.py       # Pydantic request/response schemas
 ├── providers.py    # Model loading and memory management
 └── routes/
-    ├── tts.py      # /v1/audio/speech
+    ├── tts.py      # /v1/audio/speech (with voice cloning + ffmpeg conversion)
     ├── stt.py      # /v1/audio/transcriptions
     └── vlm.py      # /v1/vision
 ```

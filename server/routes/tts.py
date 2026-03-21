@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 from mlx_audio.audio_io import write as audio_write
 
 from ..models import SpeechRequest
-from ..providers import load_tts
+from ..providers import load_tts, load_tts_clone
 
 router = APIRouter()
 
@@ -24,7 +24,6 @@ MIME_TYPES = {
     "pcm": "audio/pcm",
 }
 
-# Formats that mlx_audio.audio_io.write supports natively
 NATIVE_FORMATS = {"wav", "mp3"}
 
 
@@ -55,22 +54,43 @@ def _convert_with_ffmpeg(wav_bytes: bytes, target_fmt: str) -> bytes:
             os.unlink(out_file)
 
 
+def _generate_and_collect(model, gen_kwargs: dict) -> tuple[np.ndarray, int]:
+    """Run model.generate() and collect all chunks into one array."""
+    chunks: list[np.ndarray] = []
+    sample_rate = 24000
+    for result in model.generate(**gen_kwargs):
+        chunks.append(np.array(result.audio))
+        sample_rate = result.sample_rate
+    if not chunks:
+        raise HTTPException(status_code=500, detail="TTS produced no audio")
+    return np.concatenate(chunks), sample_rate
+
+
+def _encode_audio(audio: np.ndarray, sample_rate: int, fmt: str) -> io.BytesIO:
+    """Encode audio array to the requested format."""
+    buf = io.BytesIO()
+    if fmt in NATIVE_FORMATS:
+        audio_write(buf, audio, sample_rate, format=fmt)
+        buf.seek(0)
+    else:
+        audio_write(buf, audio, sample_rate, format="wav")
+        converted = _convert_with_ffmpeg(buf.getvalue(), fmt)
+        buf = io.BytesIO(converted)
+    return buf
+
+
 @router.post("/v1/audio/speech")
 async def create_speech(req: SpeechRequest):
     try:
-        with load_tts() as model:
-            chunks: list[np.ndarray] = []
-            sample_rate = 24000
-
-            # Voice cloning: use ref_audio + ref_text
-            if req.ref_audio:
-                import base64
-                ref_bytes = base64.b64decode(req.ref_audio)
-                # Write ref audio to temp file
-                ref_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-                ref_file.write(ref_bytes)
-                ref_file.close()
-                try:
+        if req.ref_audio:
+            # Voice cloning → use Qwen3-TTS 1.7B
+            import base64
+            ref_bytes = base64.b64decode(req.ref_audio)
+            ref_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+            ref_file.write(ref_bytes)
+            ref_file.close()
+            try:
+                with load_tts_clone() as model:
                     gen_kwargs = dict(
                         text=req.input,
                         ref_audio=ref_file.name,
@@ -78,41 +98,33 @@ async def create_speech(req: SpeechRequest):
                     )
                     if req.ref_text:
                         gen_kwargs["ref_text"] = req.ref_text
-                    for result in model.generate(**gen_kwargs):
-                        chunks.append(np.array(result.audio))
-                        sample_rate = result.sample_rate
-                finally:
-                    os.unlink(ref_file.name)
-            else:
-                # Standard voice preset
-                for result in model.generate(
+                    audio, sr = _generate_and_collect(model, gen_kwargs)
+            finally:
+                os.unlink(ref_file.name)
+        else:
+            # Regular TTS → use Kokoro (fast)
+            with load_tts() as model:
+                gen_kwargs = dict(
                     text=req.input,
                     voice=req.voice,
                     speed=req.speed,
-                ):
-                    chunks.append(np.array(result.audio))
-                    sample_rate = result.sample_rate
+                )
+                # Kokoro needs lang_code
+                if req.voice.startswith(("af_", "am_")):
+                    gen_kwargs["lang_code"] = "a"  # American English
+                elif req.voice.startswith(("bf_", "bm_")):
+                    gen_kwargs["lang_code"] = "b"  # British English
+                elif req.voice.startswith("jf_") or req.voice.startswith("jm_"):
+                    gen_kwargs["lang_code"] = "j"  # Japanese
+                else:
+                    gen_kwargs["lang_code"] = "a"  # default American English
+                audio, sr = _generate_and_collect(model, gen_kwargs)
 
-            if not chunks:
-                raise HTTPException(status_code=500, detail="TTS produced no audio")
-
-            audio = np.concatenate(chunks)
-            buf = io.BytesIO()
-
-            if req.response_format in NATIVE_FORMATS:
-                audio_write(buf, audio, sample_rate, format=req.response_format)
-                buf.seek(0)
-            else:
-                # Write as wav first, then convert with ffmpeg
-                audio_write(buf, audio, sample_rate, format="wav")
-                converted = _convert_with_ffmpeg(buf.getvalue(), req.response_format)
-                buf = io.BytesIO(converted)
-
+        buf = _encode_audio(audio, sr, req.response_format)
         mime = MIME_TYPES.get(req.response_format, "application/octet-stream")
         return StreamingResponse(buf, media_type=mime)
 
     except HTTPException:
         raise
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"TTS failed: {e}")

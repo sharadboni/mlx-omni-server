@@ -4,8 +4,8 @@ An OpenAI-compatible API server for text-to-speech, speech-to-text, and vision l
 
 ## Features
 
-- **Text-to-Speech** — Generate speech with multiple voices, formats, and voice cloning
-- **Voice Cloning** — Clone any voice from a 3-second audio sample via `ref_audio`
+- **Text-to-Speech** — Dual-model TTS: Kokoro (82M, sub-second) for preset voices, Qwen3-TTS (1.7B) for voice cloning
+- **Voice Cloning** — Clone any voice from a 3-second audio sample via `ref_audio` (automatically uses the larger model)
 - **Speech-to-Text** — Transcribe audio from file uploads or base64-encoded input
 - **Vision Language Model** — Analyze and describe images using a multimodal LLM
 - **OpenAI-compatible endpoints** — Drop-in replacement for existing OpenAI API integrations
@@ -70,18 +70,20 @@ Returns `{"status": "ok"}`.
 POST /v1/audio/speech
 ```
 
-**Basic usage (named voice):**
+**Basic usage (Kokoro — fast, preset voices):**
 
 ```json
 {
   "input": "Hello, world!",
-  "voice": "Chelsie",
+  "voice": "af_heart",
   "speed": 1.0,
   "response_format": "opus"
 }
 ```
 
-**Voice cloning (reference audio):**
+Kokoro voices: `af_heart`, `af_bella`, `af_nova`, `am_adam`, `am_echo`, `bf_alice`, `bm_daniel`, etc.
+
+**Voice cloning (Qwen3-TTS 1.7B — automatic when ref_audio provided):**
 
 ```json
 {
@@ -92,7 +94,7 @@ POST /v1/audio/speech
 }
 ```
 
-When `ref_text` is provided, full voice cloning is used for best quality. Without `ref_text`, only the speaker embedding (`x_vector_only_mode`) is extracted — more stable but less expressive.
+The server automatically selects the right model: Kokoro for preset voices, Qwen3-TTS 1.7B for voice cloning.
 
 Supported formats: `mp3`, `wav`, `aac`, `opus`, `flac`, `pcm`
 
@@ -158,11 +160,12 @@ Returns:
 
 ## Default Models
 
-| Capability | Model |
-|------------|-------|
-| TTS | `mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit` |
-| STT | `mlx-community/Qwen3-ASR-0.6B-8bit` |
-| VLM | `mlx-community/Qwen2.5-VL-3B-Instruct-8bit` |
+| Capability | Model | Notes |
+|------------|-------|-------|
+| TTS (preset voices) | `mlx-community/Kokoro-82M-bf16` | 82M params, sub-second, 54 voices |
+| TTS (voice cloning) | `mlx-community/Qwen3-TTS-12Hz-1.7B-Base-4bit` | Used automatically when `ref_audio` provided |
+| STT | `mlx-community/Qwen3-ASR-0.6B-8bit` | |
+| VLM | `mlx-community/Qwen2.5-VL-3B-Instruct-8bit` | |
 
 ## Project Structure
 

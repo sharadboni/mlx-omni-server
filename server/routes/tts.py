@@ -109,16 +109,27 @@ async def create_speech(req: SpeechRequest):
                     voice=req.voice,
                     speed=req.speed,
                 )
-                # Kokoro needs lang_code
-                if req.voice.startswith(("af_", "am_")):
-                    gen_kwargs["lang_code"] = "a"  # American English
-                elif req.voice.startswith(("bf_", "bm_")):
-                    gen_kwargs["lang_code"] = "b"  # British English
-                elif req.voice.startswith("jf_") or req.voice.startswith("jm_"):
-                    gen_kwargs["lang_code"] = "j"  # Japanese
-                else:
-                    gen_kwargs["lang_code"] = "a"  # default American English
-                audio, sr = _generate_and_collect(model, gen_kwargs)
+                # Kokoro needs lang_code — derive from voice prefix
+                lang_map = {
+                    "a": "a",  # American English (af_, am_)
+                    "b": "b",  # British English (bf_, bm_)
+                    "j": "j",  # Japanese (jf_, jm_)
+                    "z": "z",  # Chinese (zf_, zm_)
+                    "e": "e",  # Spanish (ef_, em_)
+                    "f": "f",  # French (ff_, fm_)
+                    "h": "h",  # Hindi (hf_, hm_)
+                    "i": "i",  # Italian (if_, im_)
+                    "p": "p",  # Portuguese (pf_, pm_)
+                }
+                voice_prefix = req.voice[0] if req.voice else "a"
+                lang_code = lang_map.get(voice_prefix, "a")
+                # Try with lang_code, fall back without it (version compatibility)
+                try:
+                    gen_kwargs["lang_code"] = lang_code
+                    audio, sr = _generate_and_collect(model, gen_kwargs)
+                except TypeError:
+                    del gen_kwargs["lang_code"]
+                    audio, sr = _generate_and_collect(model, gen_kwargs)
 
         buf = _encode_audio(audio, sr, req.response_format)
         mime = MIME_TYPES.get(req.response_format, "application/octet-stream")

@@ -6,6 +6,7 @@ PORT ?= 8765
 
 install:
 	uv sync
+	uv pip install pip
 	uv run python -m spacy download en_core_web_sm
 	@echo "\nInstalled. Run 'make run' to start the server"
 

@@ -6,7 +6,8 @@ PORT ?= 8765
 
 install:
 	uv sync
-	@echo "\n installed. Run `make run` to start the server"
+	uv run python -m spacy download en_core_web_sm
+	@echo "\nInstalled. Run 'make run' to start the server"
 
 run: 
 	uv run python -m server.app --host $(HOST) --port $(PORT)

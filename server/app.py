@@ -10,6 +10,7 @@ from . import providers
 from .routes import vlm
 from .routes import stt
 from .routes import tts
+from .routes import s2s
 
 logging.basicConfig(level=logging.INFO)
 app = FastAPI()
@@ -24,6 +25,7 @@ app.add_middleware(
 app.include_router(vlm.router)
 app.include_router(stt.router)
 app.include_router(tts.router)
+app.include_router(s2s.router)
 
 @app.get("/health")
 async def health():
@@ -39,7 +41,7 @@ def main():
     providers.KEEP_IN_MEMORY = args.keep_in_memory
 
     import uvicorn
-    uvicorn.run(app, host=args.host, port=args.port)
+    uvicorn.run(app, host=args.host, port=args.port, ws_ping_timeout=None)
 
 if __name__ == "__main__":
     main()

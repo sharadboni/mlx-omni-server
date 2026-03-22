@@ -12,6 +12,11 @@ dependencies = [
     "torch",
     "torchvision",
     "spacy",
+    "rustymimi==0.4.1",
+    "sentencepiece>=0.2.0",
+    "huggingface_hub",
+    "sounddevice>=0.5.3",
+    "websockets>=16.0",
 ]
 
 [tool.hatch.metadata]

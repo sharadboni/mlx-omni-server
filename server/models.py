@@ -21,6 +21,16 @@ class TranscriptionRequest(BaseModel):
     audio: str
     language: str = "en"
 
+## S2S
+
+class SpeechToSpeechRequest(BaseModel):
+    audio: str  # base64-encoded WAV at 24kHz
+    voice: str = "NATF2"
+    persona: str = "You are a helpful assistant."
+    response_format: Literal["wav", "mp3", "aac", "opus", "flac", "pcm"] = "wav"
+    seed: int = 42424242
+    stream: bool = False  # if True, stream raw int16 PCM chunks as they're generated
+
 ## VLM
 
 class VisionRequest(BaseModel):

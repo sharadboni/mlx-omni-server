@@ -5,6 +5,7 @@ An OpenAI-compatible API server for text-to-speech, speech-to-text, vision langu
 ## Features
 
 - **Text-to-Speech** — Dual-model TTS: Kokoro (82M, sub-second) for preset voices, Qwen3-TTS (1.7B) for voice cloning
+- **Multi-Voice Dialogue** — Generate multi-speaker audio from a list of segments, each with its own voice, stitched with configurable pauses
 - **Voice Cloning** — Clone any voice from a 3-second audio sample via `ref_audio` (automatically uses the larger model)
 - **Speech-to-Text** — Transcribe audio from file uploads or base64-encoded input
 - **Speech-to-Speech** — NVIDIA PersonaPlex 7B: full audio-in, audio-out conversation with voice presets, streaming and non-streaming modes
@@ -106,6 +107,50 @@ Kokoro voices: `af_heart`, `af_bella`, `af_nova`, `am_adam`, `am_echo`, `bf_alic
 The server automatically selects the right model: Kokoro for preset voices, Qwen3-TTS 1.7B for voice cloning.
 
 Supported formats: `mp3`, `wav`, `aac`, `opus`, `flac`, `pcm`
+
+Returns an audio stream with the appropriate MIME type.
+
+### Multi-Voice Dialogue
+
+```
+POST /v1/audio/dialogue
+```
+
+Generate a single audio file from multiple speakers. Each segment specifies its own voice — preset voices use Kokoro, segments with `ref_audio` use Qwen3-TTS for voice cloning.
+
+```json
+{
+  "segments": [
+    {"voice": "af_heart", "text": "Welcome to the show! Today we're talking about AI."},
+    {"voice": "am_adam", "text": "Thanks for having me. This is a fascinating topic."},
+    {"voice": "af_heart", "text": "Let's dive right in."}
+  ],
+  "speed": 1.0,
+  "response_format": "opus",
+  "pause_ms": 500
+}
+```
+
+**With voice cloning (mix preset and cloned voices):**
+
+```json
+{
+  "segments": [
+    {"voice": "af_heart", "text": "Welcome to the show!"},
+    {"voice": "custom", "text": "Great to be here.", "ref_audio": "<base64-wav>", "ref_text": "Reference transcript."}
+  ],
+  "pause_ms": 300
+}
+```
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `segments` | array | required | List of `{voice, text, ref_audio?, ref_text?}` objects |
+| `speed` | float | `1.0` | Playback speed multiplier |
+| `response_format` | string | `"mp3"` | Output format: `mp3`, `wav`, `aac`, `opus`, `flac`, `pcm` |
+| `pause_ms` | int | `500` | Silence between segments in milliseconds |
 
 Returns an audio stream with the appropriate MIME type.
 
@@ -302,7 +347,7 @@ server/
 │   ├── sampling.py     # Top-k sampling with repetition penalty
 │   └── kv_cache.py     # KV cache
 └── routes/
-    ├── tts.py      # /v1/audio/speech (with voice cloning + ffmpeg conversion)
+    ├── tts.py      # /v1/audio/speech + /v1/audio/dialogue (voice cloning + multi-voice + ffmpeg)
     ├── stt.py      # /v1/audio/transcriptions
     ├── s2s.py      # /v1/audio/speech-to-speech (HTTP + WebSocket streaming)
     └── vlm.py      # /v1/vision

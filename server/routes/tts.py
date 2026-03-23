@@ -10,10 +10,22 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from mlx_audio.audio_io import write as audio_write
 
-from ..models import SpeechRequest
+from ..models import DialogueRequest, SpeechRequest
 from ..providers import load_tts, load_tts_clone
 
 router = APIRouter()
+
+LANG_MAP = {
+    "a": "a",  # American English
+    "b": "b",  # British English
+    "j": "j",  # Japanese
+    "z": "z",  # Chinese
+    "e": "e",  # Spanish
+    "f": "f",  # French
+    "h": "h",  # Hindi
+    "i": "i",  # Italian
+    "p": "p",  # Portuguese
+}
 
 MIME_TYPES = {
     "mp3": "audio/mpeg",
@@ -110,19 +122,8 @@ async def create_speech(req: SpeechRequest):
                     speed=req.speed,
                 )
                 # Kokoro needs lang_code — derive from voice prefix
-                lang_map = {
-                    "a": "a",  # American English (af_, am_)
-                    "b": "b",  # British English (bf_, bm_)
-                    "j": "j",  # Japanese (jf_, jm_)
-                    "z": "z",  # Chinese (zf_, zm_)
-                    "e": "e",  # Spanish (ef_, em_)
-                    "f": "f",  # French (ff_, fm_)
-                    "h": "h",  # Hindi (hf_, hm_)
-                    "i": "i",  # Italian (if_, im_)
-                    "p": "p",  # Portuguese (pf_, pm_)
-                }
                 voice_prefix = req.voice[0] if req.voice else "a"
-                lang_code = lang_map.get(voice_prefix, "a")
+                lang_code = LANG_MAP.get(voice_prefix, "a")
                 # Try with lang_code, fall back without it (version compatibility)
                 try:
                     gen_kwargs["lang_code"] = lang_code
@@ -139,3 +140,70 @@ async def create_speech(req: SpeechRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"TTS failed: {e}")
+
+
+def _generate_segment_audio(
+    segment, speed: float, tts_model, clone_model_loader
+) -> tuple[np.ndarray, int]:
+    """Generate audio for a single dialogue segment."""
+    import base64
+
+    if segment.ref_audio:
+        ref_bytes = base64.b64decode(segment.ref_audio)
+        ref_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        ref_file.write(ref_bytes)
+        ref_file.close()
+        try:
+            with clone_model_loader() as model:
+                gen_kwargs = dict(text=segment.text, ref_audio=ref_file.name, speed=speed)
+                if segment.ref_text:
+                    gen_kwargs["ref_text"] = segment.ref_text
+                return _generate_and_collect(model, gen_kwargs)
+        finally:
+            os.unlink(ref_file.name)
+    else:
+        voice_prefix = segment.voice[0] if segment.voice else "a"
+        lang_code = LANG_MAP.get(voice_prefix, "a")
+        gen_kwargs = dict(text=segment.text, voice=segment.voice, speed=speed)
+        try:
+            gen_kwargs["lang_code"] = lang_code
+            return _generate_and_collect(tts_model, gen_kwargs)
+        except TypeError:
+            del gen_kwargs["lang_code"]
+            return _generate_and_collect(tts_model, gen_kwargs)
+
+
+@router.post("/v1/audio/dialogue")
+async def create_dialogue(req: DialogueRequest):
+    if not req.segments:
+        raise HTTPException(status_code=400, detail="No segments provided")
+
+    try:
+        audio_parts: list[np.ndarray] = []
+        sample_rate = 24000
+
+        with load_tts() as tts_model:
+            for seg in req.segments:
+                audio, sr = _generate_segment_audio(
+                    seg, req.speed, tts_model, load_tts_clone
+                )
+                sample_rate = sr
+                audio_parts.append(audio)
+                # Add silence between segments
+                if req.pause_ms > 0:
+                    silence_samples = int(sample_rate * req.pause_ms / 1000)
+                    audio_parts.append(np.zeros(silence_samples, dtype=audio.dtype))
+
+        # Remove trailing silence
+        if req.pause_ms > 0 and len(audio_parts) > 1:
+            audio_parts.pop()
+
+        combined = np.concatenate(audio_parts)
+        buf = _encode_audio(combined, sample_rate, req.response_format)
+        mime = MIME_TYPES.get(req.response_format, "application/octet-stream")
+        return StreamingResponse(buf, media_type=mime)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Dialogue TTS failed: {e}")

@@ -15,6 +15,18 @@ class SpeechRequest(BaseModel):
     ref_audio: str | None = None   # base64-encoded reference audio for voice cloning
     ref_text: str | None = None    # transcript of the reference audio
 
+class DialogueSegment(BaseModel):
+    voice: str                        # voice identifier (e.g. "af_heart", "am_adam")
+    text: str                         # text for this segment
+    ref_audio: str | None = None      # base64 reference audio (voice cloning)
+    ref_text: str | None = None       # transcript of reference audio
+
+class DialogueRequest(BaseModel):
+    segments: list[DialogueSegment]
+    speed: float = 1.0
+    response_format: Literal["wav", "mp3", "aac", "opus", "flac", "pcm"] = "mp3"
+    pause_ms: int = 500               # silence between segments in milliseconds
+
 ## STT
 
 class TranscriptionRequest(BaseModel):

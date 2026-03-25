@@ -8,6 +8,7 @@ import os
 import tempfile
 import threading
 from typing import Any
+import warnings
 
 import mlx.core as mx
 
@@ -181,7 +182,9 @@ def load_llm(model_id: str | None = None):
         from transformers import PreTrainedTokenizerFast
         model_path = _download(actual_id)
         model, _ = _load_weights(model_path)
-        hf_tok = PreTrainedTokenizerFast.from_pretrained(str(model_path))
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="The tokenizer class you load")
+            hf_tok = PreTrainedTokenizerFast.from_pretrained(str(model_path))
         tokenizer = TokenizerWrapper(hf_tok)
     result = (model, tokenizer)
 

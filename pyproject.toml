@@ -17,6 +17,7 @@ dependencies = [
     "huggingface_hub",
     "sounddevice>=0.5.3",
     "websockets>=16.0",
+    "mlx-lm",
 ]
 
 [tool.hatch.metadata]

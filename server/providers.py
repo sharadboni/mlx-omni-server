@@ -7,7 +7,7 @@ from typing import Any
 
 import mlx.core as mx
 
-from .config import DEFAULT_STT_MODEL, DEFAULT_TTS_MODEL, DEFAULT_TTS_CLONE_MODEL, DEFAULT_VLM_MODEL, DEFAULT_S2S_MODEL_REPO
+from .config import DEFAULT_LLM_MODEL, DEFAULT_LLM_FAST_MODEL, DEFAULT_STT_MODEL, DEFAULT_TTS_MODEL, DEFAULT_TTS_CLONE_MODEL, DEFAULT_VLM_MODEL, DEFAULT_S2S_MODEL_REPO
 
 log = logging.getLogger(__name__)
 
@@ -111,6 +111,32 @@ def load_s2s():
             del model, result
             _unload("s2s")
             log.info("S2S model unloaded from memory")
+
+
+@contextmanager
+def load_llm(model_id: str | None = None):
+    actual_id = model_id or DEFAULT_LLM_MODEL
+    cache_key = f"llm:{actual_id}"
+
+    if keep_in_memory and cache_key in _cache:
+        yield _cache[cache_key]
+        return
+
+    log.info(f"Loading LLM: {actual_id}")
+    from mlx_lm import load
+    model, tokenizer = load(actual_id)
+    result = (model, tokenizer)
+
+    if keep_in_memory:
+        _cache[cache_key] = result
+        yield result
+    else:
+        try:
+            yield result
+        finally:
+            del model, tokenizer, result
+            _unload(cache_key)
+            log.info(f"LLM {actual_id} unloaded from memory")
 
 
 @contextmanager

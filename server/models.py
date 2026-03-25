@@ -1,9 +1,23 @@
 from __future__ import annotations
 
 import time
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel
+
+## Chat Completions
+
+class ChatMessage(BaseModel):
+    role: Literal["system", "user", "assistant"]
+    content: str
+
+class ChatCompletionRequest(BaseModel):
+    model: Optional[str] = None   # defaults to DEFAULT_LLM_MODEL if omitted
+    messages: list[ChatMessage]
+    temperature: float = 0.7
+    max_tokens: int = 1024
+    stream: bool = False
+    thinking: Optional[bool] = None  # True=enable chain-of-thought, False=disable, None=model default
 
 ## TTS
 

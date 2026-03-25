@@ -1,9 +1,10 @@
 # MLX Omni Server
 
-An OpenAI-compatible API server for text-to-speech, speech-to-text, vision language models, and speech-to-speech — powered by [MLX](https://github.com/ml-explore/mlx) on Apple Silicon.
+An OpenAI-compatible API server for chat completions, text-to-speech, speech-to-text, vision language models, and speech-to-speech — powered by [MLX](https://github.com/ml-explore/mlx) on Apple Silicon.
 
 ## Features
 
+- **Chat Completions** — OpenAI-compatible `/v1/chat/completions` powered by Qwen3.5, with optional chain-of-thought thinking mode and streaming
 - **Text-to-Speech** — Dual-model TTS: Kokoro (82M, sub-second) for preset voices, Qwen3-TTS (1.7B) for voice cloning
 - **Multi-Voice Dialogue** — Generate multi-speaker audio from a list of segments, each with its own voice, stitched with configurable pauses
 - **Voice Cloning** — Clone any voice from a 3-second audio sample via `ref_audio` (automatically uses the larger model)
@@ -65,6 +66,81 @@ make stop PORT=8765
 ```
 
 ## API Endpoints
+
+### Chat Completions
+
+```
+POST /v1/chat/completions
+```
+
+OpenAI-compatible chat endpoint powered by [Qwen3.5-9B](https://huggingface.co/mlx-community/Qwen3.5-9B-4bit) (4-bit, default) or any `mlx-lm`-compatible model.
+
+**Basic usage:**
+
+```json
+{
+  "messages": [
+    {"role": "system", "content": "You are a helpful assistant."},
+    {"role": "user", "content": "Hello!"}
+  ]
+}
+```
+
+**With all options:**
+
+```json
+{
+  "model": "mlx-community/Qwen3.5-4B-4bit",
+  "messages": [{"role": "user", "content": "Explain quantum entanglement."}],
+  "temperature": 0.7,
+  "max_tokens": 1024,
+  "stream": false,
+  "thinking": true
+}
+```
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `model` | string | `Qwen3.5-9B-4bit` | Any HuggingFace mlx-lm model ID |
+| `messages` | array | required | Array of `{role, content}` objects (`system`/`user`/`assistant`) |
+| `temperature` | float | `0.7` | Sampling temperature |
+| `max_tokens` | int | `1024` | Maximum tokens to generate |
+| `stream` | boolean | `false` | Stream tokens via SSE |
+| `thinking` | boolean | `null` | `true` enables chain-of-thought (`<think>` blocks), `false` disables it, `null` uses model default |
+
+**Streaming example:**
+
+```bash
+curl http://localhost:8765/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"messages": [{"role": "user", "content": "Hello!"}], "stream": true}'
+```
+
+**Thinking mode (Qwen3.5):**
+
+Qwen3.5 supports a chain-of-thought reasoning mode. When enabled the response includes a `<think>...</think>` block before the final answer:
+
+```bash
+# Thinking on — model reasons step-by-step before answering
+curl http://localhost:8765/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"messages": [{"role": "user", "content": "What is 17 * 34?"}], "thinking": true}'
+
+# Thinking off — direct answer, no reasoning trace
+curl http://localhost:8765/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"messages": [{"role": "user", "content": "What is 17 * 34?"}], "thinking": false}'
+```
+
+**Fast model shortcut:**
+
+Use `mlx-community/Qwen3.5-4B-4bit` for lower latency at the cost of some quality:
+
+```json
+{"model": "mlx-community/Qwen3.5-4B-4bit", "messages": [...]}
+```
 
 ### Health Check
 
@@ -324,6 +400,8 @@ Returns:
 
 | Capability | Model | Notes |
 |------------|-------|-------|
+| Chat (default) | `mlx-community/Qwen3.5-9B-4bit` | 9B params, 4-bit quantized |
+| Chat (fast) | `mlx-community/Qwen3.5-4B-4bit` | 4B params, lower latency |
 | TTS (preset voices) | `mlx-community/Kokoro-82M-bf16` | 82M params, sub-second, 54 voices |
 | TTS (voice cloning) | `mlx-community/Qwen3-TTS-12Hz-1.7B-Base-4bit` | Used automatically when `ref_audio` provided |
 | STT | `mlx-community/Qwen3-ASR-0.6B-8bit` | |
@@ -347,6 +425,7 @@ server/
 │   ├── sampling.py     # Top-k sampling with repetition penalty
 │   └── kv_cache.py     # KV cache
 └── routes/
+    ├── chat.py     # /v1/chat/completions (streaming + thinking mode)
     ├── tts.py      # /v1/audio/speech + /v1/audio/dialogue (voice cloning + multi-voice + ffmpeg)
     ├── stt.py      # /v1/audio/transcriptions
     ├── s2s.py      # /v1/audio/speech-to-speech (HTTP + WebSocket streaming)

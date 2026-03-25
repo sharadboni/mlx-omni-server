@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import providers
+from .routes import chat
 from .routes import vlm
 from .routes import stt
 from .routes import tts
@@ -22,6 +23,7 @@ app.add_middleware(
     allow_credentials=True,
 )
 
+app.include_router(chat.router)
 app.include_router(vlm.router)
 app.include_router(stt.router)
 app.include_router(tts.router)

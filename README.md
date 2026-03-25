@@ -150,6 +150,37 @@ GET /health
 
 Returns `{"status": "ok"}`.
 
+### Server State
+
+```
+GET /state
+```
+
+Returns the current server state:
+
+```json
+{
+  "status": "running",
+  "keep_in_memory": false,
+  "loaded_models": ["llm:mlx-community/Qwen3.5-9B-4bit"]
+}
+```
+
+### Model Load Check
+
+```
+GET /instance/previews?model_id=<model_id>
+```
+
+Check whether a specific model is currently loaded in the cache:
+
+```json
+{
+  "model_id": "mlx-community/Qwen3.5-9B-4bit",
+  "loaded": true
+}
+```
+
 ### Text-to-Speech
 
 ```

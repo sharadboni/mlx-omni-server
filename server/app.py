@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import argparse
 import logging
+import time
 from typing import Optional
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import providers
@@ -15,7 +16,21 @@ from .routes import tts
 from .routes import s2s
 
 logging.basicConfig(level=logging.INFO)
+log = logging.getLogger(__name__)
+
 app = FastAPI()
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start = time.perf_counter()
+    log.info("→ %s %s", request.method, request.url.path)
+    response = await call_next(request)
+    elapsed = time.perf_counter() - start
+    log.info("← %s %s %d  %.3fs", request.method, request.url.path, response.status_code, elapsed)
+    return response
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

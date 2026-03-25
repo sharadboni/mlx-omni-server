@@ -124,7 +124,19 @@ def load_llm(model_id: str | None = None):
 
     log.info(f"Loading LLM: {actual_id}")
     from mlx_lm import load
-    model, tokenizer = load(actual_id)
+    try:
+        model, tokenizer = load(actual_id, tokenizer_config={"trust_remote_code": True})
+    except ValueError as e:
+        if "does not exist or is not currently imported" not in str(e):
+            raise
+        log.warning(f"Unknown tokenizer class, falling back to PreTrainedTokenizerFast: {e}")
+        from mlx_lm.utils import _download, load_model as _load_weights
+        from mlx_lm.tokenizer_utils import TokenizerWrapper
+        from transformers import PreTrainedTokenizerFast
+        model_path = _download(actual_id)
+        model, _ = _load_weights(model_path)
+        hf_tok = PreTrainedTokenizerFast.from_pretrained(str(model_path))
+        tokenizer = TokenizerWrapper(hf_tok)
     result = (model, tokenizer)
 
     if keep_in_memory:

@@ -37,7 +37,7 @@ dev = [
 ]
 
 [tool.uv]
-override-dependencies = ["transformers>=4.45,<5"]
+override-dependencies = ["transformers>=4.45,<5", "mlx-lm>=0.31.1"]
 
 [[tool.uv.index]]
 url = "https://pypi.org/simple"

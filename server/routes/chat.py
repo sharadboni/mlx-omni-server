@@ -16,50 +16,43 @@ from ..models import ChatCompletionRequest
 from ..providers import load_llm
 
 
-_THINK_RE = re.compile(r'\A<think>.*?</think>\n*', re.DOTALL)
-
-
 def _strip_thinking(text: str) -> str:
-    """Remove the leading <think>…</think> block produced by reasoning models."""
-    return _THINK_RE.sub('', text)
+    """Remove thinking content up to and including </think>.
+
+    The chat template prepends '<think>\\n' as the generation prompt, so the
+    model output starts with raw thinking content and ends the block with
+    '</think>\\n\\n' before the actual response.
+    """
+    if "</think>" in text:
+        return text.split("</think>", 1)[1].lstrip("\n")
+    return text
 
 
 class _ThinkingStreamFilter:
-    """Suppress <think>…</think> tokens from a streaming response.
+    """Buffer streaming tokens until </think> is seen, then pass through.
 
-    Buffers output until </think> is seen, then passes through everything after.
-    If no thinking block is present (e.g. thinking=False), the initial buffer
-    is flushed as soon as we can confirm the response doesn't start with <think>.
+    The chat template adds '<think>\\n' to the generation prompt, so model
+    output starts with thinking content and contains '</think>' before the
+    real response. Everything up to and including '</think>' is suppressed.
+    flush() emits any remaining buffer (safety net if </think> never arrives).
     """
-
-    _THINK_START = "<think>"
-    _THINK_END   = "</think>"
 
     def __init__(self):
         self._buf = ""
-        self._done = False       # True once we're past the thinking block
-        self._in_think = None    # None=undecided, True=thinking, False=no thinking
+        self._done = False
 
     def feed(self, token: str) -> str:
-        """Return text to emit now; empty string means 'still buffering'."""
         if self._done:
             return token
         self._buf += token
-        if self._in_think is None and len(self._buf) >= len(self._THINK_START):
-            self._in_think = self._buf.startswith(self._THINK_START)
-            if not self._in_think:
-                self._done = True
-                out, self._buf = self._buf, ""
-                return out
-        if self._in_think and self._THINK_END in self._buf:
-            _, after = self._buf.split(self._THINK_END, 1)
+        if "</think>" in self._buf:
+            _, after = self._buf.split("</think>", 1)
             self._done = True
             self._buf = ""
             return after.lstrip("\n")
         return ""
 
     def flush(self) -> str:
-        """Return any content still in the buffer (safety net for short outputs)."""
         out, self._buf = self._buf, ""
         return out
 
@@ -140,12 +133,9 @@ def _blocking_response(req: ChatCompletionRequest) -> dict:
         prompt = _build_prompt(tokenizer, req.messages, req.thinking)
         prompt_tokens = len(tokenizer.encode(prompt))
 
-        text = _strip_thinking(generate(
-            model,
-            tokenizer,
-            prompt=prompt,
-            **_make_generation_kwargs(req),
-        ))
+        text = generate(model, tokenizer, prompt=prompt, **_make_generation_kwargs(req))
+        if req.thinking is not False:
+            text = _strip_thinking(text)
         completion_tokens = len(tokenizer.encode(text))
 
     return {
@@ -190,9 +180,10 @@ async def _stream_response(req: ChatCompletionRequest, request: Request):
     cancel = threading.Event()
 
     gen_kwargs = _make_generation_kwargs(req)
+    strip_thinking = req.thinking is not False
 
     def generate_thread():
-        think_filter = _ThinkingStreamFilter()
+        think_filter = _ThinkingStreamFilter() if strip_thinking else None
         try:
             with load_llm(req.model) as (model, tokenizer):
                 prompt = _build_prompt(tokenizer, req.messages, req.thinking)
@@ -204,12 +195,13 @@ async def _stream_response(req: ChatCompletionRequest, request: Request):
                 ):
                     if cancel.is_set():
                         break
-                    text = think_filter.feed(chunk.text)
+                    text = think_filter.feed(chunk.text) if think_filter else chunk.text
                     if text:
                         loop.call_soon_threadsafe(q.put_nowait, text)
-            remaining = think_filter.flush()
-            if remaining:
-                loop.call_soon_threadsafe(q.put_nowait, remaining)
+            if think_filter:
+                remaining = think_filter.flush()
+                if remaining:
+                    loop.call_soon_threadsafe(q.put_nowait, remaining)
         except Exception as exc:
             loop.call_soon_threadsafe(q.put_nowait, f"\n\n[ERROR: {exc}]")
         finally:

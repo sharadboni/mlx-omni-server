@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import threading
 import time
 import uuid
@@ -13,6 +14,54 @@ from fastapi.responses import StreamingResponse
 
 from ..models import ChatCompletionRequest
 from ..providers import load_llm
+
+
+_THINK_RE = re.compile(r'\A<think>.*?</think>\n*', re.DOTALL)
+
+
+def _strip_thinking(text: str) -> str:
+    """Remove the leading <think>…</think> block produced by reasoning models."""
+    return _THINK_RE.sub('', text)
+
+
+class _ThinkingStreamFilter:
+    """Suppress <think>…</think> tokens from a streaming response.
+
+    Buffers output until </think> is seen, then passes through everything after.
+    If no thinking block is present (e.g. thinking=False), the initial buffer
+    is flushed as soon as we can confirm the response doesn't start with <think>.
+    """
+
+    _THINK_START = "<think>"
+    _THINK_END   = "</think>"
+
+    def __init__(self):
+        self._buf = ""
+        self._done = False       # True once we're past the thinking block
+        self._in_think = None    # None=undecided, True=thinking, False=no thinking
+
+    def feed(self, token: str) -> str:
+        """Return text to emit now; empty string means 'still buffering'."""
+        if self._done:
+            return token
+        self._buf += token
+        if self._in_think is None and len(self._buf) >= len(self._THINK_START):
+            self._in_think = self._buf.startswith(self._THINK_START)
+            if not self._in_think:
+                self._done = True
+                out, self._buf = self._buf, ""
+                return out
+        if self._in_think and self._THINK_END in self._buf:
+            _, after = self._buf.split(self._THINK_END, 1)
+            self._done = True
+            self._buf = ""
+            return after.lstrip("\n")
+        return ""
+
+    def flush(self) -> str:
+        """Return any content still in the buffer (safety net for short outputs)."""
+        out, self._buf = self._buf, ""
+        return out
 
 
 # Recommended sampling parameters per Qwen3.5 model card.
@@ -91,12 +140,12 @@ def _blocking_response(req: ChatCompletionRequest) -> dict:
         prompt = _build_prompt(tokenizer, req.messages, req.thinking)
         prompt_tokens = len(tokenizer.encode(prompt))
 
-        text = generate(
+        text = _strip_thinking(generate(
             model,
             tokenizer,
             prompt=prompt,
             **_make_generation_kwargs(req),
-        )
+        ))
         completion_tokens = len(tokenizer.encode(text))
 
     return {
@@ -143,6 +192,7 @@ async def _stream_response(req: ChatCompletionRequest, request: Request):
     gen_kwargs = _make_generation_kwargs(req)
 
     def generate_thread():
+        think_filter = _ThinkingStreamFilter()
         try:
             with load_llm(req.model) as (model, tokenizer):
                 prompt = _build_prompt(tokenizer, req.messages, req.thinking)
@@ -154,7 +204,12 @@ async def _stream_response(req: ChatCompletionRequest, request: Request):
                 ):
                     if cancel.is_set():
                         break
-                    loop.call_soon_threadsafe(q.put_nowait, chunk.text)
+                    text = think_filter.feed(chunk.text)
+                    if text:
+                        loop.call_soon_threadsafe(q.put_nowait, text)
+            remaining = think_filter.flush()
+            if remaining:
+                loop.call_soon_threadsafe(q.put_nowait, remaining)
         except Exception as exc:
             loop.call_soon_threadsafe(q.put_nowait, f"\n\n[ERROR: {exc}]")
         finally:

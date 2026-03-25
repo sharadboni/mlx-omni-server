@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 import base64
-from pyexpat import model
+import logging
 import tempfile
 from pathlib import Path
-from turtle import write
 from typing import Optional
-from urllib import request
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
 from ..models import TranscriptionRequest
 from ..providers import load_stt
 
+log = logging.getLogger(__name__)
 router = APIRouter()
 
 @router.post("/v1/audio/transcriptions")
@@ -62,10 +61,10 @@ def _run_stt(audio_path: str, language: Optional[str]) -> dict:
         with load_stt() as model:
             kwargs = {}
             if language:
-                kwargs ["Language"] = language
-
-        result = model.generate(audio_path, **kwargs)
+                kwargs["language"] = language
+            result = model.generate(audio_path, **kwargs)
         text = result["text"] if isinstance(result, dict) else result.text
-        return {"text": text}      
+        return {"text": text}
     except Exception as e:
+        log.exception("STT failed")
         raise HTTPException(status_code=500, detail=f"STT failed: {e}")

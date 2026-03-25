@@ -58,7 +58,7 @@ def main():
     parser.add_argument("--keep-in-memory", action="store_true", help="Keep models in memory between requests")
     args = parser.parse_args()
 
-    providers.KEEP_IN_MEMORY = args.keep_in_memory
+    providers.keep_in_memory = args.keep_in_memory
 
     import uvicorn
     uvicorn.run(app, host=args.host, port=args.port, ws_ping_timeout=None)

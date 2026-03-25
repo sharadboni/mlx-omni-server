@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 
 import asyncio
+import logging
 
 import numpy as np
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
@@ -15,6 +16,7 @@ from fastapi.responses import StreamingResponse
 from ..models import SpeechToSpeechRequest
 from ..providers import load_s2s
 
+log = logging.getLogger(__name__)
 router = APIRouter()
 
 MIME_TYPES = {
@@ -137,6 +139,7 @@ async def speech_to_speech(req: SpeechToSpeechRequest):
     except HTTPException:
         raise
     except Exception as e:
+        log.exception("S2S failed")
         raise HTTPException(status_code=500, detail=f"S2S failed: {e}")
 
 
@@ -235,10 +238,7 @@ async def speech_to_speech_ws(websocket: WebSocket):
                                 await websocket.send_json({"status": "ready"})
                                 continue
 
-                            import logging
-                            logging.getLogger(__name__).info(
-                                f"S2S processing {len(user_audio)/24000:.1f}s utterance"
-                            )
+                            log.info(f"S2S processing {len(user_audio)/24000:.1f}s utterance")
                             await websocket.send_json({"status": "processing"})
                             # Run inference in a thread while send_chunks drains the queue
                             send_task = asyncio.create_task(send_chunks())

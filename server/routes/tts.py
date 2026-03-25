@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import subprocess
 import tempfile
 import os
@@ -13,6 +14,7 @@ from mlx_audio.audio_io import write as audio_write
 from ..models import DialogueRequest, SpeechRequest
 from ..providers import load_tts, load_tts_clone
 
+log = logging.getLogger(__name__)
 router = APIRouter()
 
 LANG_MAP = {
@@ -139,6 +141,7 @@ async def create_speech(req: SpeechRequest):
     except HTTPException:
         raise
     except Exception as e:
+        log.exception("TTS failed")
         raise HTTPException(status_code=500, detail=f"TTS failed: {e}")
 
 
@@ -206,4 +209,5 @@ async def create_dialogue(req: DialogueRequest):
     except HTTPException:
         raise
     except Exception as e:
+        log.exception("Dialogue TTS failed")
         raise HTTPException(status_code=500, detail=f"Dialogue TTS failed: {e}")

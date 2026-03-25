@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 import tempfile
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from fastapi import APIRouter, HTTPException
 from ..models import VisionRequest
 from ..providers import load_vlm
 
+log = logging.getLogger(__name__)
 router = APIRouter()
 
 _SIGNATURES = {
@@ -48,6 +50,7 @@ async def vision(request: VisionRequest):
             text = output.text if hasattr(output, "text") else str(output)
             return {"text": text}
     except Exception as e:
+        log.exception("Vision request failed")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         if tmp_path:

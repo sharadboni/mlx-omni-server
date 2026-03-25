@@ -6,12 +6,15 @@ import threading
 import time
 import uuid
 
+import logging
+
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from ..models import ChatCompletionRequest
 from ..providers import load_llm
 
+log = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -36,11 +39,13 @@ async def chat_completions(req: ChatCompletionRequest):
     except HTTPException:
         raise
     except Exception as e:
+        log.exception("Chat completions failed")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 def _blocking_response(req: ChatCompletionRequest) -> dict:
     from mlx_lm import generate
+    from mlx_lm.sample_utils import make_sampler
 
     model_id = req.model or _default_model_id()
     with load_llm(req.model) as (model, tokenizer):
@@ -52,7 +57,7 @@ def _blocking_response(req: ChatCompletionRequest) -> dict:
             tokenizer,
             prompt=prompt,
             max_tokens=req.max_tokens,
-            temp=req.temperature,
+            sampler=make_sampler(temp=req.temperature),
         )
         completion_tokens = len(tokenizer.encode(text))
 
@@ -97,6 +102,7 @@ async def _stream_response(req: ChatCompletionRequest):
     loop = asyncio.get_event_loop()
 
     def generate_thread():
+        from mlx_lm.sample_utils import make_sampler
         try:
             with load_llm(req.model) as (model, tokenizer):
                 prompt = _build_prompt(tokenizer, req.messages, req.thinking)
@@ -105,7 +111,7 @@ async def _stream_response(req: ChatCompletionRequest):
                     tokenizer,
                     prompt=prompt,
                     max_tokens=req.max_tokens,
-                    temp=req.temperature,
+                    sampler=make_sampler(temp=req.temperature),
                 ):
                     loop.call_soon_threadsafe(q.put_nowait, chunk.text)
         except Exception as exc:

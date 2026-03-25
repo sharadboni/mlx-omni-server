@@ -26,16 +26,27 @@ _GPU_LOCK_PATH = os.path.join(tempfile.gettempdir(), "mlx_omni_gpu.lock")
 _gpu_lock_file = open(_GPU_LOCK_PATH, "w")
 _thread_lock = threading.Lock()  # guards against concurrent threads within this process
 
+# If a generation hangs and holds the lock, callers wait at most this many seconds
+# before receiving a 503 instead of hanging forever.
+_GPU_LOCK_TIMEOUT = 300  # seconds
+
 
 @contextmanager
 def _gpu_lock():
     """Exclusive lock across both threads (within a process) and processes."""
-    with _thread_lock:
+    if not _thread_lock.acquire(timeout=_GPU_LOCK_TIMEOUT):
+        raise RuntimeError(
+            f"GPU busy: could not acquire lock after {_GPU_LOCK_TIMEOUT}s — "
+            "a previous generation may be stuck. Restart the server to recover."
+        )
+    try:
         fcntl.flock(_gpu_lock_file, fcntl.LOCK_EX)
         try:
             yield
         finally:
             fcntl.flock(_gpu_lock_file, fcntl.LOCK_UN)
+    finally:
+        _thread_lock.release()
 
 def _unload(key: str):
     _cache.pop(key, None)

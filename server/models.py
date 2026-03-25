@@ -14,10 +14,18 @@ class ChatMessage(BaseModel):
 class ChatCompletionRequest(BaseModel):
     model: Optional[str] = None   # defaults to DEFAULT_LLM_MODEL if omitted
     messages: list[ChatMessage]
-    temperature: float = 0.7
-    max_tokens: int = 1024
+    max_tokens: int = 32768
     stream: bool = False
     thinking: Optional[bool] = None  # True=enable chain-of-thought, False=disable, None=model default
+    # Sampling — None means "use the mode-appropriate default" (thinking vs non-thinking)
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    top_k: Optional[int] = None
+    min_p: Optional[float] = None
+    # Logits processors — None means disabled
+    presence_penalty: Optional[float] = None
+    repetition_penalty: Optional[float] = None
+    frequency_penalty: Optional[float] = None
 
 ## TTS
 

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import argparse
 import logging
+from typing import Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import providers
@@ -32,6 +33,23 @@ app.include_router(s2s.router)
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+@app.get("/state")
+async def state():
+    return {
+        "status": "running",
+        "keep_in_memory": providers.keep_in_memory,
+        "loaded_models": list(providers._cache.keys()),
+    }
+
+@app.get("/instance/previews")
+async def instance_previews(model_id: Optional[str] = Query(None)):
+    cache_key = f"llm:{model_id}" if model_id else None
+    loaded = cache_key in providers._cache if cache_key else False
+    return {
+        "model_id": model_id,
+        "loaded": loaded,
+    }
 
 def main():
     parser = argparse.ArgumentParser(description="MLX Server")

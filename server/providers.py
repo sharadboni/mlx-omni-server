@@ -7,6 +7,7 @@ import logging
 import os
 import tempfile
 import threading
+import time
 from typing import Any
 import warnings
 
@@ -24,7 +25,7 @@ _cache: dict[str, Any] = {}
 # Use a file lock so that multiple server processes on the same machine are also
 # serialized — a threading.Lock() only works within a single process.
 _GPU_LOCK_PATH = os.path.join(tempfile.gettempdir(), "mlx_omni_gpu.lock")
-_gpu_lock_file = open(_GPU_LOCK_PATH, "w")
+_gpu_lock_file = open(_GPU_LOCK_PATH, "a")
 _thread_lock = threading.Lock()  # guards against concurrent threads within this process
 
 # If a generation hangs and holds the lock, callers wait at most this many seconds
@@ -41,7 +42,18 @@ def _gpu_lock():
             "a previous generation may be stuck. Restart the server to recover."
         )
     try:
-        fcntl.flock(_gpu_lock_file, fcntl.LOCK_EX)
+        deadline = time.monotonic() + _GPU_LOCK_TIMEOUT
+        while True:
+            try:
+                fcntl.flock(_gpu_lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(
+                        f"GPU busy: cross-process lock timeout after {_GPU_LOCK_TIMEOUT}s — "
+                        "another server process may be stuck. Restart all instances to recover."
+                    )
+                time.sleep(0.05)
         try:
             yield
         finally:

@@ -94,11 +94,56 @@ _TOKEN_TIMEOUT = 120.0
 _BLOCKING_TIMEOUT = 300.0
 
 
-def _build_prompt(tokenizer, messages: list, thinking: bool | None = None) -> str:
-    raw = [{"role": m.role, "content": m.content} for m in messages]
+_TOOL_CALL_RE = re.compile(
+    r'<tool_call>\s*<function=([^>]+)>(.*?)</function>\s*</tool_call>',
+    re.DOTALL,
+)
+_PARAM_RE = re.compile(r'<parameter=([^>]+)>\n?(.*?)\n?</parameter>', re.DOTALL)
+_TC_START = "<tool_call>"
+_TC_END   = "</tool_call>"
+
+
+def _parse_tool_calls(text: str) -> list[dict]:
+    """Parse Qwen3.5 tool call XML into OpenAI-format tool_calls list."""
+    calls = []
+    for m in _TOOL_CALL_RE.finditer(text):
+        name = m.group(1).strip()
+        args: dict = {}
+        for p in _PARAM_RE.finditer(m.group(2)):
+            k, v = p.group(1).strip(), p.group(2).strip()
+            try:
+                args[k] = json.loads(v)
+            except json.JSONDecodeError:
+                args[k] = v
+        calls.append({
+            "id": f"call_{uuid.uuid4().hex[:12]}",
+            "type": "function",
+            "function": {"name": name, "arguments": json.dumps(args)},
+        })
+    return calls
+
+
+def _build_prompt(tokenizer, messages: list, thinking: bool | None = None,
+                  tools: list | None = None) -> str:
+    raw = []
+    for m in messages:
+        msg: dict = {"role": m.role, "content": m.content or ""}
+        if m.tool_calls:
+            msg["tool_calls"] = [
+                {"function": {
+                    "name": tc.function.name,
+                    "arguments": json.loads(tc.function.arguments),
+                }}
+                for tc in m.tool_calls
+            ]
+        raw.append(msg)
+
     kwargs: dict = {"tokenize": False, "add_generation_prompt": True}
     if thinking is not None:
         kwargs["enable_thinking"] = thinking
+    # Don't pass tools when tool_choice is "none" or no tools provided
+    if tools:
+        kwargs["tools"] = [t.model_dump() for t in tools]
     return tokenizer.apply_chat_template(raw, **kwargs)
 
 
@@ -128,9 +173,10 @@ async def chat_completions(req: ChatCompletionRequest, request: Request):
 def _blocking_response(req: ChatCompletionRequest) -> dict:
     from mlx_lm import generate
 
+    effective_tools = req.tools if req.tool_choice != "none" else None
     model_id = req.model or _default_model_id()
     with load_llm(req.model) as (model, tokenizer):
-        prompt = _build_prompt(tokenizer, req.messages, req.thinking)
+        prompt = _build_prompt(tokenizer, req.messages, req.thinking, effective_tools)
         prompt_tokens = len(tokenizer.encode(prompt))
 
         text = generate(model, tokenizer, prompt=prompt, **_make_generation_kwargs(req))
@@ -138,18 +184,21 @@ def _blocking_response(req: ChatCompletionRequest) -> dict:
             text = _strip_thinking(text)
         completion_tokens = len(tokenizer.encode(text))
 
+    tool_calls = _parse_tool_calls(text) if effective_tools else []
+    if tool_calls:
+        content = text[:text.index(_TC_START)].strip() if _TC_START in text else None
+        message = {"role": "assistant", "content": content, "tool_calls": tool_calls}
+        finish_reason = "tool_calls"
+    else:
+        message = {"role": "assistant", "content": text}
+        finish_reason = "stop"
+
     return {
         "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
         "object": "chat.completion",
         "created": int(time.time()),
         "model": model_id,
-        "choices": [
-            {
-                "index": 0,
-                "message": {"role": "assistant", "content": text},
-                "finish_reason": "stop",
-            }
-        ],
+        "choices": [{"index": 0, "message": message, "finish_reason": finish_reason}],
         "usage": {
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
@@ -181,27 +230,65 @@ async def _stream_response(req: ChatCompletionRequest, request: Request):
 
     gen_kwargs = _make_generation_kwargs(req)
     strip_thinking = req.thinking is not False
+    effective_tools = req.tools if req.tool_choice != "none" else None
 
     def generate_thread():
         think_filter = _ThinkingStreamFilter() if strip_thinking else None
+        # Peek buffer: hold back up to len(_TC_START) chars so we can detect
+        # a tool call opening tag that spans multiple tokens without emitting early.
+        peek_buf = ""
+        tool_buf: str | None = None  # non-None while collecting a tool call block
+
+        def _emit(text: str) -> None:
+            if text:
+                loop.call_soon_threadsafe(q.put_nowait, text)
+
+        def _process(text: str) -> None:
+            nonlocal peek_buf, tool_buf
+            if tool_buf is not None:
+                tool_buf += text
+                if _TC_END in tool_buf:
+                    calls = _parse_tool_calls(tool_buf)
+                    if calls:
+                        loop.call_soon_threadsafe(q.put_nowait, ("tool_calls", calls))
+                    tool_buf = None
+                return
+            peek_buf += text
+            if _TC_START in peek_buf:
+                pre, rest = peek_buf.split(_TC_START, 1)
+                _emit(pre)
+                peek_buf = ""
+                tool_buf = _TC_START + rest
+                if _TC_END in tool_buf:
+                    calls = _parse_tool_calls(tool_buf)
+                    if calls:
+                        loop.call_soon_threadsafe(q.put_nowait, ("tool_calls", calls))
+                    tool_buf = None
+            elif len(peek_buf) > len(_TC_START):
+                safe, peek_buf = peek_buf[:-len(_TC_START)], peek_buf[-len(_TC_START):]
+                _emit(safe)
+
         try:
             with load_llm(req.model) as (model, tokenizer):
-                prompt = _build_prompt(tokenizer, req.messages, req.thinking)
-                for chunk in stream_generate(
-                    model,
-                    tokenizer,
-                    prompt=prompt,
-                    **gen_kwargs,
-                ):
+                prompt = _build_prompt(tokenizer, req.messages, req.thinking, effective_tools)
+                for chunk in stream_generate(model, tokenizer, prompt=prompt, **gen_kwargs):
                     if cancel.is_set():
                         break
                     text = think_filter.feed(chunk.text) if think_filter else chunk.text
                     if text:
-                        loop.call_soon_threadsafe(q.put_nowait, text)
+                        _process(text) if effective_tools else _emit(text)
+            # Flush
             if think_filter:
-                remaining = think_filter.flush()
-                if remaining:
-                    loop.call_soon_threadsafe(q.put_nowait, remaining)
+                rem = think_filter.flush()
+                if rem:
+                    _process(rem) if effective_tools else _emit(rem)
+            if effective_tools:
+                if peek_buf:
+                    _emit(peek_buf)
+                if tool_buf:
+                    calls = _parse_tool_calls(tool_buf)
+                    if calls:
+                        loop.call_soon_threadsafe(q.put_nowait, ("tool_calls", calls))
         except Exception as exc:
             loop.call_soon_threadsafe(q.put_nowait, f"\n\n[ERROR: {exc}]")
         finally:
@@ -210,6 +297,7 @@ async def _stream_response(req: ChatCompletionRequest, request: Request):
     thread = threading.Thread(target=generate_thread, daemon=True)
     thread.start()
 
+    had_tool_calls = False
     try:
         while True:
             if await request.is_disconnected():
@@ -226,12 +314,32 @@ async def _stream_response(req: ChatCompletionRequest, request: Request):
 
             if token is None:
                 break
+
+            if isinstance(token, tuple) and token[0] == "tool_calls":
+                had_tool_calls = True
+                delta = {
+                    "tool_calls": [
+                        {
+                            "index": i,
+                            "id": tc["id"],
+                            "type": "function",
+                            "function": {
+                                "name": tc["function"]["name"],
+                                "arguments": tc["function"]["arguments"],
+                            },
+                        }
+                        for i, tc in enumerate(token[1])
+                    ]
+                }
+            else:
+                delta = {"content": token}
+
             chunk = {
                 "id": completion_id,
                 "object": "chat.completion.chunk",
                 "created": created,
                 "model": model_id,
-                "choices": [{"index": 0, "delta": {"content": token}, "finish_reason": None}],
+                "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
             }
             yield f"data: {json.dumps(chunk)}\n\n"
     finally:
@@ -243,7 +351,7 @@ async def _stream_response(req: ChatCompletionRequest, request: Request):
         "object": "chat.completion.chunk",
         "created": created,
         "model": model_id,
-        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls" if had_tool_calls else "stop"}],
     }
     yield f"data: {json.dumps(done_chunk)}\n\n"
     yield "data: [DONE]\n\n"

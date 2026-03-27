@@ -7,9 +7,29 @@ from pydantic import BaseModel
 
 ## Chat Completions
 
+class ToolFunctionDef(BaseModel):
+    name: str
+    description: Optional[str] = None
+    parameters: Optional[dict] = None
+
+class Tool(BaseModel):
+    type: Literal["function"] = "function"
+    function: ToolFunctionDef
+
+class ToolCallFunction(BaseModel):
+    name: str
+    arguments: str  # JSON-encoded string (OpenAI format)
+
+class ToolCall(BaseModel):
+    id: str
+    type: Literal["function"] = "function"
+    function: ToolCallFunction
+
 class ChatMessage(BaseModel):
-    role: Literal["system", "user", "assistant"]
-    content: str
+    role: Literal["system", "user", "assistant", "tool"]
+    content: Optional[str] = None
+    tool_calls: Optional[list[ToolCall]] = None
+    tool_call_id: Optional[str] = None  # identifies which tool call this result answers
 
 class ChatCompletionRequest(BaseModel):
     model: Optional[str] = None   # defaults to DEFAULT_LLM_MODEL if omitted
@@ -17,6 +37,8 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: int = 32768
     stream: bool = False
     thinking: Optional[bool] = None  # True=enable chain-of-thought, False=disable, None=model default
+    tools: Optional[list[Tool]] = None
+    tool_choice: Optional[str] = "auto"  # "auto" | "none" | "required"
     # Sampling — None means "use the mode-appropriate default" (thinking vs non-thinking)
     temperature: Optional[float] = None
     top_p: Optional[float] = None

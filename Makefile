@@ -29,9 +29,8 @@ run-bg-cached:
 stop:
 	@if [ -f $(PID_FILE) ]; then \
 		kill $$(cat $(PID_FILE)) && rm $(PID_FILE) && echo "Server stopped"; \
-	else \
-		lsof -ti:$(PORT) | xargs kill -9 && echo "Server stopped" || echo "Nothing running on port $(PORT)"; \
 	fi
+	@lsof -ti:$(PORT),52415 | xargs kill -9 2>/dev/null || true
 
 clean:
 	rm -rf $(VENV) __pycache__ server/__pycache__ server/routes/__pycache__

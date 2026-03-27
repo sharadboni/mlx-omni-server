@@ -4,7 +4,7 @@ An OpenAI-compatible API server for chat completions, text-to-speech, speech-to-
 
 ## Features
 
-- **Chat Completions** — OpenAI-compatible `/v1/chat/completions` powered by Qwen3.5, with optional chain-of-thought thinking mode and streaming
+- **Chat Completions** — OpenAI-compatible `/v1/chat/completions` powered by Qwen3.5, with tool calling, optional chain-of-thought thinking mode, and streaming
 - **Text-to-Speech** — Dual-model TTS: Kokoro (82M, sub-second) for preset voices, Qwen3-TTS (1.7B) for voice cloning
 - **Multi-Voice Dialogue** — Generate multi-speaker audio from a list of segments, each with its own voice, stitched with configurable pauses
 - **Voice Cloning** — Clone any voice from a 3-second audio sample via `ref_audio` (automatically uses the larger model)
@@ -104,11 +104,13 @@ OpenAI-compatible chat endpoint powered by [Qwen3.5-9B](https://huggingface.co/m
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `model` | string | `Qwen3.5-9B-4bit` | Any HuggingFace mlx-lm model ID |
-| `messages` | array | required | Array of `{role, content}` objects (`system`/`user`/`assistant`) |
+| `messages` | array | required | Array of `{role, content}` objects (`system`/`user`/`assistant`/`tool`) |
 | `temperature` | float | `0.7` | Sampling temperature |
 | `max_tokens` | int | `1024` | Maximum tokens to generate |
 | `stream` | boolean | `false` | Stream tokens via SSE |
 | `thinking` | boolean | `null` | `true` enables chain-of-thought (`<think>` blocks), `false` disables it, `null` uses model default |
+| `tools` | array | `null` | List of tool definitions (OpenAI function-calling format) |
+| `tool_choice` | string | `"auto"` | `"auto"` lets the model decide, `"none"` disables tool use, `"required"` forces a call |
 
 **Streaming example:**
 
@@ -132,6 +134,45 @@ curl http://localhost:8765/v1/chat/completions \
 curl http://localhost:8765/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"messages": [{"role": "user", "content": "What is 17 * 34?"}], "thinking": false}'
+```
+
+**Tool calling (Qwen3.5):**
+
+Qwen3.5 supports function/tool calling natively. Pass a `tools` array in OpenAI format and the model will emit tool calls when appropriate. Multi-turn conversations with tool results use `role: "tool"` messages.
+
+```json
+{
+  "messages": [{"role": "user", "content": "What's the weather in Paris?"}],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Get current weather for a city",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "city": {"type": "string", "description": "City name"}
+          },
+          "required": ["city"]
+        }
+      }
+    }
+  ]
+}
+```
+
+When the model calls a tool the response has `finish_reason: "tool_calls"` and a `tool_calls` array. Pass the result back as a `role: "tool"` message:
+
+```json
+{
+  "messages": [
+    {"role": "user", "content": "What's the weather in Paris?"},
+    {"role": "assistant", "tool_calls": [{"id": "call_abc123", "type": "function", "function": {"name": "get_weather", "arguments": "{\"city\": \"Paris\"}"}}]},
+    {"role": "tool", "tool_call_id": "call_abc123", "content": "{\"temperature\": 18, \"condition\": \"cloudy\"}"}
+  ],
+  "tools": [...]
+}
 ```
 
 **Fast model shortcut:**
@@ -456,7 +497,7 @@ server/
 │   ├── sampling.py     # Top-k sampling with repetition penalty
 │   └── kv_cache.py     # KV cache
 └── routes/
-    ├── chat.py     # /v1/chat/completions (streaming + thinking mode)
+    ├── chat.py     # /v1/chat/completions (streaming + thinking mode + tool calling)
     ├── tts.py      # /v1/audio/speech + /v1/audio/dialogue (voice cloning + multi-voice + ffmpeg)
     ├── stt.py      # /v1/audio/transcriptions
     ├── s2s.py      # /v1/audio/speech-to-speech (HTTP + WebSocket streaming)

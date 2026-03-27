@@ -1,8 +1,10 @@
 VENV := .venv
 HOST ?= 0.0.0.0
 PORT ?= 8765
+PID_FILE ?= server.pid
+LOG_FILE ?= server.log
 
-.PHONY: install run-cached run clean stop
+.PHONY: install run run-cached run-bg run-bg-cached stop clean
 
 install:
 	uv sync
@@ -10,14 +12,26 @@ install:
 	uv run python -m spacy download en_core_web_sm
 	@echo "\nInstalled. Run 'make run' to start the server"
 
-run: 
+run:
 	uv run python -m server.app --host $(HOST) --port $(PORT)
 
-run-cached: 
+run-cached:
 	uv run python -m server.app --host $(HOST) --port $(PORT) --keep-in-memory
 
+run-bg:
+	@nohup uv run python -m server.app --host $(HOST) --port $(PORT) > $(LOG_FILE) 2>&1 & echo $$! > $(PID_FILE)
+	@echo "Server started (pid $$(cat $(PID_FILE))) — logs in $(LOG_FILE)"
+
+run-bg-cached:
+	@nohup uv run python -m server.app --host $(HOST) --port $(PORT) --keep-in-memory > $(LOG_FILE) 2>&1 & echo $$! > $(PID_FILE)
+	@echo "Server started (pid $$(cat $(PID_FILE))) — logs in $(LOG_FILE)"
+
 stop:
-	@lsof -ti:$(PORT) | xargs kill -9
+	@if [ -f $(PID_FILE) ]; then \
+		kill $$(cat $(PID_FILE)) && rm $(PID_FILE) && echo "Server stopped"; \
+	else \
+		lsof -ti:$(PORT) | xargs kill -9 && echo "Server stopped" || echo "Nothing running on port $(PORT)"; \
+	fi
 
 clean:
 	rm -rf $(VENV) __pycache__ server/__pycache__ server/routes/__pycache__

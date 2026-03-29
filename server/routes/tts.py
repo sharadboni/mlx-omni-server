@@ -57,6 +57,35 @@ MIME_TYPES = {
 
 NATIVE_FORMATS = {"wav", "mp3"}
 
+# Kokoro language code → full language name
+KOKORO_LANG = {
+    "en-us": "American English",
+    "en-gb": "British English",
+    "es":    "Spanish",
+    "fr":    "French",
+    "hi":    "Hindi",
+    "it":    "Italian",
+    "ja":    "Japanese",
+    "pt":    "Portuguese",
+    "zh":    "Chinese",
+}
+
+# VibeVoice language prefix → full language name
+# Note: VibeVoice uses non-standard codes (jp/kr/sp instead of ja/ko/es)
+VIBEVOICE_LANG = {
+    "de": "German",
+    "en": "English",
+    "fr": "French",
+    "in": "Indian English",
+    "it": "Italian",
+    "jp": "Japanese",
+    "kr": "Korean",
+    "nl": "Dutch",
+    "pl": "Polish",
+    "pt": "Portuguese",
+    "sp": "Spanish",
+}
+
 # Default alternating voices when the caller omits voice on a segment.
 # Index 0 = first speaker, index 1 = second speaker (cycles for longer dialogues).
 DEFAULT_VOICES: dict[str, list[str]] = {
@@ -82,16 +111,18 @@ def _list_voices(model_id: str) -> list[dict]:
         name = f.stem
         entry: dict = {"name": name}
 
-        # Kokoro: af_heart → language=en-us, gender=female
+        # Kokoro: af_heart → language=en-us, language_name=American English, gender=female
         prefix = name[:2]
         if prefix in KOKORO_PREFIX:
             lang, gender = KOKORO_PREFIX[prefix]
             entry["language"] = lang
+            entry["language_name"] = KOKORO_LANG.get(lang, lang)
             entry["gender"] = gender
-        # VibeVoice: en-Emma_woman → language=en, gender=female
+        # VibeVoice: en-Emma_woman → language=en, language_name=English, gender=female
         elif "-" in name and "_" in name:
             lang_part, rest = name.split("-", 1)
             entry["language"] = lang_part
+            entry["language_name"] = VIBEVOICE_LANG.get(lang_part, lang_part)
             entry["gender"] = "female" if rest.endswith("_woman") else "male" if rest.endswith("_man") else "unknown"
 
         voices.append(entry)

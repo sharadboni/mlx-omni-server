@@ -338,21 +338,39 @@ GET /v1/audio/voices?model=kokoro
 
 Lists all available voices for a model with language and gender metadata. Does not load model weights — resolves from the local HuggingFace cache.
 
+Both models return `language`, `language_name`, and `gender` for every voice.
+
+**VibeVoice:**
 ```json
 {
   "model": "vibevoice",
   "count": 24,
   "voices": [
-    {"name": "en-Carter_man", "language": "en", "gender": "male"},
-    {"name": "en-Davis_man",  "language": "en", "gender": "male"},
-    {"name": "en-Emma_woman", "language": "en", "gender": "female"},
-    {"name": "in-Samuel_man", "language": "in", "gender": "male"},
-    {"name": "zh-Bowen_man",  "language": "zh", "gender": "male"}
+    {"name": "en-Emma_woman",  "language": "en", "language_name": "English",        "gender": "female"},
+    {"name": "en-Carter_man",  "language": "en", "language_name": "English",        "gender": "male"},
+    {"name": "in-Samuel_man",  "language": "in", "language_name": "Indian English", "gender": "male"},
+    {"name": "de-Spk0_man",    "language": "de", "language_name": "German",         "gender": "male"},
+    {"name": "jp-Spk0_man",    "language": "jp", "language_name": "Japanese",       "gender": "male"},
+    {"name": "sp-Spk0_woman",  "language": "sp", "language_name": "Spanish",        "gender": "female"}
   ]
 }
 ```
 
-Kokoro response includes language codes (`en-us`, `en-gb`, `hi`, `ja`, `zh`, etc.) derived from the voice filename prefix.
+**Kokoro:**
+```json
+{
+  "model": "kokoro",
+  "count": 54,
+  "voices": [
+    {"name": "af_heart",    "language": "en-us", "language_name": "American English", "gender": "female"},
+    {"name": "am_adam",     "language": "en-us", "language_name": "American English", "gender": "male"},
+    {"name": "bf_emma",     "language": "en-gb", "language_name": "British English",  "gender": "female"},
+    {"name": "hf_alpha",    "language": "hi",    "language_name": "Hindi",            "gender": "female"},
+    {"name": "jm_kumo",     "language": "ja",    "language_name": "Japanese",         "gender": "male"},
+    {"name": "zf_xiaobei",  "language": "zh",    "language_name": "Chinese",          "gender": "female"}
+  ]
+}
+```
 
 ### Speech-to-Text
 

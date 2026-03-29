@@ -60,16 +60,17 @@ class SpeechRequest(BaseModel):
     ref_text: str | None = None    # transcript of the reference audio
 
 class DialogueSegment(BaseModel):
-    voice: str                        # voice identifier (e.g. "af_heart", "am_adam")
+    voice: str                        # voice identifier (e.g. "af_heart", "en-Emma_woman")
     text: str                         # text for this segment
     ref_audio: str | None = None      # base64 reference audio (voice cloning)
     ref_text: str | None = None       # transcript of reference audio
 
 class DialogueRequest(BaseModel):
     segments: list[DialogueSegment]
+    model: Literal["kokoro", "vibevoice"] = "vibevoice"
     speed: float = 1.0
     response_format: Literal["wav", "mp3", "aac", "opus", "flac", "pcm"] = "mp3"
-    pause_ms: int = 500               # silence between segments in milliseconds
+    pause_ms: int = 500               # silence between segments (kokoro only)
 
 ## STT
 

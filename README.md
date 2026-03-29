@@ -6,8 +6,9 @@ An OpenAI-compatible API server for chat completions, text-to-speech, speech-to-
 
 - **Chat Completions** — OpenAI-compatible `/v1/chat/completions` powered by Qwen3.5, with tool calling, optional chain-of-thought thinking mode, and streaming
 - **Text-to-Speech** — Dual-model TTS: Kokoro (82M, sub-second) for preset voices, Qwen3-TTS (1.7B) for voice cloning
-- **Multi-Voice Dialogue** — Generate multi-speaker audio from a list of segments, each with its own voice, stitched with configurable pauses
-- **Voice Cloning** — Clone any voice from a 3-second audio sample via `ref_audio` (automatically uses the larger model)
+- **Multi-Voice Dialogue** — Generate multi-speaker audio using VibeVoice-Realtime (0.5B) with native multi-speaker batching; falls back to per-segment stitching when voice cloning is mixed in
+- **Voice Cloning in Dialogue** — Mix preset and cloned voices in a single dialogue request; cloned segments automatically use Qwen3-TTS, preset segments use VibeVoice or Kokoro — all batched per model to avoid GPU contention
+- **Voice Discovery** — `GET /v1/audio/voices` lists all available voices for a given model with language and gender metadata; unsupported voices are silently substituted with per-model defaults
 - **Speech-to-Text** — Transcribe audio from file uploads or base64-encoded input
 - **Speech-to-Speech** — NVIDIA PersonaPlex 7B: full audio-in, audio-out conversation with voice presets, streaming and non-streaming modes
 - **Vision Language Model** — Analyze and describe images using a multimodal LLM
@@ -264,30 +265,48 @@ Returns an audio stream with the appropriate MIME type.
 POST /v1/audio/dialogue
 ```
 
-Generate a single audio file from multiple speakers. Each segment specifies its own voice — preset voices use Kokoro, segments with `ref_audio` use Qwen3-TTS for voice cloning.
+Generate a single audio file from multiple speakers. Defaults to VibeVoice-Realtime (0.5B) which uses a native multi-speaker batch — all segments in one GPU pass. Segments with `ref_audio` use Qwen3-TTS for voice cloning. When both types are present, each model loads once for its batch and results are reassembled in order.
+
+**Basic (VibeVoice, two speakers):**
 
 ```json
 {
   "segments": [
-    {"voice": "af_heart", "text": "Welcome to the show! Today we're talking about AI."},
-    {"voice": "am_adam", "text": "Thanks for having me. This is a fascinating topic."},
-    {"voice": "af_heart", "text": "Let's dive right in."}
+    {"voice": "en-Emma_woman", "text": "Welcome to the show! Today we're talking about AI."},
+    {"voice": "en-Carter_man", "text": "Thanks for having me. This is a fascinating topic."},
+    {"voice": "en-Emma_woman", "text": "Let's dive right in."}
   ],
-  "speed": 1.0,
-  "response_format": "opus",
-  "pause_ms": 500
+  "response_format": "wav"
 }
 ```
 
-**With voice cloning (mix preset and cloned voices):**
+**Unsupported voices are substituted automatically.** If you pass Kokoro voice names to a VibeVoice request, they are replaced with the model's defaults (`en-Emma_woman` / `en-Carter_man`). The substitution is logged server-side.
+
+**Mixed: preset + voice-cloned speakers:**
 
 ```json
 {
+  "model": "vibevoice",
   "segments": [
-    {"voice": "af_heart", "text": "Welcome to the show!"},
+    {"voice": "en-Emma_woman", "text": "Welcome to the show!"},
     {"voice": "custom", "text": "Great to be here.", "ref_audio": "<base64-wav>", "ref_text": "Reference transcript."}
   ],
   "pause_ms": 300
+}
+```
+
+VibeVoice segments are batched together (one model load), Qwen3-TTS segments are batched together (one model load), then stitched in original order.
+
+**Kokoro dialogue (stitched with configurable pauses):**
+
+```json
+{
+  "model": "kokoro",
+  "segments": [
+    {"voice": "af_heart", "text": "Hello there!"},
+    {"voice": "am_adam",  "text": "Hey, how are you?"}
+  ],
+  "pause_ms": 400
 }
 ```
 
@@ -296,11 +315,44 @@ Generate a single audio file from multiple speakers. Each segment specifies its 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `segments` | array | required | List of `{voice, text, ref_audio?, ref_text?}` objects |
+| `model` | string | `"vibevoice"` | TTS backend for preset voices: `"vibevoice"` or `"kokoro"` |
 | `speed` | float | `1.0` | Playback speed multiplier |
 | `response_format` | string | `"mp3"` | Output format: `mp3`, `wav`, `aac`, `opus`, `flac`, `pcm` |
-| `pause_ms` | int | `500` | Silence between segments in milliseconds |
+| `pause_ms` | int | `500` | Silence between segments in milliseconds (kokoro and mixed; ignored for pure VibeVoice batch) |
+
+**Default voices per model (used when a supplied voice is not supported):**
+
+| Model | Speaker 1 (even) | Speaker 2 (odd) |
+|-------|-----------------|-----------------|
+| `vibevoice` | `en-Emma_woman` | `en-Carter_man` |
+| `kokoro` | `af_heart` | `am_adam` |
 
 Returns an audio stream with the appropriate MIME type.
+
+### Voice Discovery
+
+```
+GET /v1/audio/voices?model=vibevoice
+GET /v1/audio/voices?model=kokoro
+```
+
+Lists all available voices for a model with language and gender metadata. Does not load model weights — resolves from the local HuggingFace cache.
+
+```json
+{
+  "model": "vibevoice",
+  "count": 24,
+  "voices": [
+    {"name": "en-Carter_man", "language": "en", "gender": "male"},
+    {"name": "en-Davis_man",  "language": "en", "gender": "male"},
+    {"name": "en-Emma_woman", "language": "en", "gender": "female"},
+    {"name": "in-Samuel_man", "language": "in", "gender": "male"},
+    {"name": "zh-Bowen_man",  "language": "zh", "gender": "male"}
+  ]
+}
+```
+
+Kokoro response includes language codes (`en-us`, `en-gb`, `hi`, `ja`, `zh`, etc.) derived from the voice filename prefix.
 
 ### Speech-to-Text
 
@@ -474,7 +526,8 @@ Returns:
 |------------|-------|-------|
 | Chat (default) | `mlx-community/Qwen3.5-9B-4bit` | 9B params, 4-bit quantized |
 | Chat (fast) | `mlx-community/Qwen3.5-4B-4bit` | 4B params, lower latency |
-| TTS (preset voices) | `mlx-community/Kokoro-82M-bf16` | 82M params, sub-second, 54 voices |
+| TTS (preset voices) | `mlx-community/Kokoro-82M-bf16` | 82M params, sub-second, 54 voices — used by `/speech` |
+| TTS (dialogue) | `mlx-community/VibeVoice-Realtime-0.5B-fp16` | 0.5B params, native multi-speaker, 24 voices — default for `/dialogue` |
 | TTS (voice cloning) | `mlx-community/Qwen3-TTS-12Hz-1.7B-Base-4bit` | Used automatically when `ref_audio` provided |
 | STT | `mlx-community/Qwen3-ASR-0.6B-8bit` | |
 | S2S | `aufklarer/PersonaPlex-7B-MLX-4bit` | 7B params, 4-bit quantized, ~4.9 GB |

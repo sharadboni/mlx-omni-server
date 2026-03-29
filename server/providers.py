@@ -13,7 +13,7 @@ import warnings
 
 import mlx.core as mx
 
-from .config import DEFAULT_LLM_MODEL, DEFAULT_LLM_FAST_MODEL, DEFAULT_STT_MODEL, DEFAULT_TTS_MODEL, DEFAULT_TTS_CLONE_MODEL, DEFAULT_VLM_MODEL, DEFAULT_S2S_MODEL_REPO
+from .config import DEFAULT_LLM_MODEL, DEFAULT_LLM_FAST_MODEL, DEFAULT_STT_MODEL, DEFAULT_TTS_MODEL, DEFAULT_TTS_VIBEVOICE_MODEL, DEFAULT_TTS_CLONE_MODEL, DEFAULT_VLM_MODEL, DEFAULT_S2S_MODEL_REPO
 
 log = logging.getLogger(__name__)
 
@@ -91,6 +91,32 @@ def load_tts():
             del model
             _unload("tts")
             log.info("TTS model unloaded from memory")
+
+
+@contextmanager
+def load_tts_vibevoice():
+    """Load VibeVoice-Realtime TTS model for natural multi-voice dialogue."""
+    if keep_in_memory and "tts_vibevoice" in _cache:
+        with _gpu_lock():
+            yield _cache["tts_vibevoice"]
+        return
+
+    log.info(f"Loading VibeVoice TTS model: {DEFAULT_TTS_VIBEVOICE_MODEL}")
+    from mlx_audio.tts.utils import load_model
+    model = load_model(DEFAULT_TTS_VIBEVOICE_MODEL)
+
+    if keep_in_memory:
+        _cache["tts_vibevoice"] = model
+        with _gpu_lock():
+            yield model
+    else:
+        try:
+            with _gpu_lock():
+                yield model
+        finally:
+            del model
+            _unload("tts_vibevoice")
+            log.info("VibeVoice TTS model unloaded from memory")
 
 
 @contextmanager
